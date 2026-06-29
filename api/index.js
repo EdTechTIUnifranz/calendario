@@ -14,14 +14,25 @@ const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next
 
 // --- HEALTH CHECK (diagnóstico) ---
 app.get('/api/health', asyncHandler(async (req, res) => {
-  const hasDb = !!process.env.DATABASE_URL;
+  const hasDb = !!(
+    process.env.DATABASE_URL ||
+    (process.env.DB_HOST && process.env.DB_USERNAME && process.env.DB_DATABASE)
+  );
   let dbOk = false;
   let dbError = null;
   if (hasDb) {
     try { await queryOne('SELECT 1 as ok'); dbOk = true; }
     catch (e) { dbError = e.message; }
   }
-  res.json({ status: dbOk ? 'ok' : 'error', DATABASE_URL_set: hasDb, db_connected: dbOk, db_error: dbError });
+  res.json({
+    status: dbOk ? 'ok' : 'error',
+    DATABASE_URL_set: !!process.env.DATABASE_URL,
+    DB_HOST_set: !!process.env.DB_HOST,
+    DB_USERNAME_set: !!process.env.DB_USERNAME,
+    DB_DATABASE_set: !!process.env.DB_DATABASE,
+    db_connected: dbOk,
+    db_error: dbError
+  });
 }));
 
 // --- AUTH & ME ---

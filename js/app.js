@@ -27,7 +27,11 @@ const App = {
             e.preventDefault();
             const u = document.getElementById('login-user').value;
             const p = document.getElementById('login-pass').value;
-            const res = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: u, password: p }) }).then(r => r.json());
+            const res = await API.request('/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: u, password: p })
+            }, true);
             if (res.error) return showToast(res.error, 'error');
             localStorage.setItem('edtech_token', res.token);
             this.user = res.user;
@@ -45,9 +49,6 @@ const App = {
     async startApp() {
         document.getElementById('login-screen').style.display = 'none';
         document.getElementById('app-wrapper').style.display = 'block';
-        
-        // Quietly run migration to ensure DB is up to date (bypasses InfinityFree requirement of manual visits)
-        fetch('/api/migrate.php').catch(() => {});
         
         document.getElementById('current-user-name').textContent = this.user.name;
         
@@ -163,30 +164,62 @@ const API = {
         const token = localStorage.getItem('edtech_token');
         return token ? { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` } : { 'Content-Type': 'application/json' };
     },
+    async parseResponse(res) {
+        const contentType = res.headers.get('content-type') || '';
+        const raw = await res.text();
+
+        if (contentType.includes('application/json')) {
+            try {
+                return JSON.parse(raw);
+            } catch (error) {
+                return { error: 'La respuesta del servidor no es JSON valido.' };
+            }
+        }
+
+        const isHtml = raw.trim().startsWith('<!DOCTYPE') || raw.trim().startsWith('<html');
+        if (isHtml) {
+            if (res.status === 404) {
+                return { error: 'La API no esta publicada en este servidor. Verifica la configuracion del hosting Node/Express.' };
+            }
+            return { error: 'El servidor devolvio HTML en lugar de JSON.' };
+        }
+
+        return raw ? { error: raw } : { error: `Error HTTP ${res.status}` };
+    },
     async checkAuth(res, silent) {
+        const data = await this.parseResponse(res);
         if (res.status === 401 && !silent) {
             localStorage.removeItem('edtech_token');
             location.reload();
         }
-        return res.json();
+        if (!res.ok && !data.error) {
+            data.error = `Error HTTP ${res.status}`;
+        }
+        return data;
     },
-    async get(url, silent = false) {
-        const res = await fetch(`/api${url}`, { headers: this.getHeaders(), cache: 'no-store' });
+    async request(url, options = {}, silent = false) {
+        const res = await fetch(`/api${url}`, {
+            ...options,
+            headers: {
+                ...this.getHeaders(),
+                ...(options.headers || {})
+            }
+        });
         return this.checkAuth(res, silent);
     },
+    async get(url, silent = false) {
+        return this.request(url, { cache: 'no-store' }, silent);
+    },
     async post(url, data) {
-        const res = await fetch(`/api${url}`, { method: 'POST', headers: this.getHeaders(), body: JSON.stringify(data) });
-        return this.checkAuth(res);
+        return this.request(url, { method: 'POST', body: JSON.stringify(data) });
     },
     async put(url, data) {
-        const res = await fetch(`/api${url}`, { method: 'PUT', headers: this.getHeaders(), body: JSON.stringify(data) });
-        return this.checkAuth(res);
+        return this.request(url, { method: 'PUT', body: JSON.stringify(data) });
     },
     async del(url, data = null) {
         const opts = { method: 'DELETE', headers: this.getHeaders() };
         if (data) opts.body = JSON.stringify(data);
-        const res = await fetch(`/api${url}`, opts);
-        return this.checkAuth(res);
+        return this.request(url, opts);
     }
 };
 
